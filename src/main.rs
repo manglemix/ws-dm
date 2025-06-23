@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use axum::{
     Router,
     extract::{Path, State, WebSocketUpgrade, ws::WebSocket},
@@ -8,6 +10,7 @@ use axum::{
 use axum_server::tls_rustls::RustlsConfig;
 use dashmap::{DashMap, Entry};
 use tokio::sync::oneshot::{self, Sender};
+
 
 #[axum::debug_handler]
 async fn create_room(
@@ -23,6 +26,7 @@ async fn create_room(
         Entry::Vacant(vacant_entry) => ws.on_upgrade(move |mut ws| async move {
             let (sender, receiver) = oneshot::channel();
             vacant_entry.insert(sender);
+            let mut end_instant = Instant::now() + std::time::Duration::from_secs(60);
             let result = tokio::select! {
                 result = receiver => result,
                 _ = async {
@@ -35,11 +39,16 @@ async fn create_room(
                     ws_sender_map.remove(&room_id);
                     return;
                 }
+                _ = tokio::time::sleep_until(end_instant.into()) => {
+                    ws_sender_map.remove(&room_id);
+                    return;
+                }
             };
             let Ok(mut peer_ws) = result else {
                 ws_sender_map.remove(&room_id);
                 return;
             };
+            end_instant = Instant::now() + std::time::Duration::from_secs(60);
             loop {
                 tokio::select! {
                     option = ws.recv() => {
@@ -58,11 +67,15 @@ async fn create_room(
                             break;
                         }
                     }
+                    _ = tokio::time::sleep_until(end_instant.into()) => {
+                        break;
+                    }
                 }
             }
         }),
     }
 }
+
 
 #[axum::debug_handler]
 async fn join_room(
@@ -80,6 +93,7 @@ async fn join_room(
             .unwrap(),
     }
 }
+
 
 #[tokio::main]
 async fn main() {
